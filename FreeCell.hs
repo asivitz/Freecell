@@ -140,10 +140,9 @@ removeEmpty = filter (not . emptyStack)
 
 instance Eq Board where
     Board cs fd fc == Board cs' fd' fc' = 
-        and [ fd == fd'
-            , removeEmpty fc == removeEmpty fc'
-            , removeEmpty cs == removeEmpty cs'
-            ]
+        fd == fd' &&
+        removeEmpty fc == removeEmpty fc' &&
+        removeEmpty cs == removeEmpty cs'
 
 instance Show Board where
     show (Board cs fd fc) = 
@@ -152,7 +151,7 @@ instance Show Board where
       where
         csstring = unlines $ for cs $ ("C "  ++) . unwords . map cardString . cards
         fdstring = unlines $ for fd $ ("FD " ++) . unwords . map cardString . cards
-        fcstring = "FC " ++ unwords (map cardString . (foldl (++) []) $ (map cards) fc)
+        fcstring = "FC " ++ unwords (map cardString . concat $ map cards fc)
 
 for = flip map
 
@@ -244,14 +243,14 @@ pushFoundation (Board cs fd fc) (Card rk st) =
     Board cs fd' fc
 
   where 
-    fd' = applyAt fd num (`pushCard` (Card rk st))
+    fd' = applyAt fd num (`pushCard` Card rk st)
     num = fromJust $ elemIndex st [Heart .. Spade]
 
 modifyFirstWhere :: (a -> Bool) -> (a -> a) -> [a] -> [a]
 modifyFirstWhere _ _ [] = []
 modifyFirstWhere p f (x:xs)
-    | p x = (f x) : xs
-    | otherwise = x : (modifyFirstWhere p f xs)
+    | p x = f x : xs
+    | otherwise = x : modifyFirstWhere p f xs
 
 -- |Push a card into a freecell.
 pushFreeCell :: Board -> Card -> Board
@@ -265,7 +264,7 @@ popFreeCell (Board cs fd fc) card =
     Board cs fd fc'
 
   where 
-    fc' = modifyFirstWhere (\x -> maybe False (==card) (topCard x)) popCard fc
+    fc' = modifyFirstWhere (maybe False (==card) . topCard) popCard fc
 
 -- |Just a dumb function to attempt to identify to score moves.  Needs work, clearly.
 entropyScore :: Board -> Int
@@ -298,12 +297,10 @@ entropyScore (Board cs fd fc) =
 
     buriedFDs = (*3) 
         $ sum 
-        $ (map cards cs) `concatFor` findIndices (`elem` nextCards)
+        $ map cards cs `concatFor` findIndices (`elem` nextCards)
 
-    continues x2 x1 = 
-        and [ succ (rank x1) == rank  x2
-            , red        x1  == black x2
-            ]
+    continues x2 x1 = succ (rank x1) == rank  x2 &&
+                            red x1   == black x2
 
 -- |Determines which cascades a card can be played on.
 playableCascades :: Board -> Card -> [Int]
@@ -314,10 +311,8 @@ playableCascades (Board stacks _ _) cd =
     playableCascade (Cascade stack) = case stack of
         []             -> True
         Card Ace _ : _ -> False
-        st         : _ ->
-            and [ black cd == red        st
-                , rank  cd == pred (rank st)
-                ]
+        st         : _ -> black cd == red st &&
+                          rank  cd == pred (rank st)
 
 -- |Determines if a card can be played on the foundation stacks.
 playableFoundation :: Board -> Card -> Bool
@@ -374,7 +369,7 @@ availableCascadeCards (Board cs _ _) =
 
 -- |Determines which cards are in the freecells.
 availableFreeCellCards :: Board -> Stack
-availableFreeCellCards = (foldl (++) []) . (map cards) . freecells
+availableFreeCellCards = concatMap cards . freecells
 
 -- |Utility function to succ the rank of a card without throwing an error if you succ a King.
 safesucc :: Rank -> Rank
@@ -491,12 +486,10 @@ check tr =
         let bd = gameBoard $ head s
 
         if solvedBoard bd 
-        then do
-            return [s] 
+        then return [s] 
 
-        else if any (==bd) bdlst 
-        then do
-            return [] 
+        else if bd `elem` bdlst 
+        then return [] 
             
         else do
             modify (bd:) 
@@ -532,7 +525,7 @@ loadBoardFromText rawtext =
   where
     loadBoard :: [String] -> ([Cascade], [Foundation], [Freecell]) -> ([Cascade], [Foundation], [Freecell])
     loadBoard strings emp = foldl (\(cs, fd, fc) list -> case list of
-        'C' : ' ' :       s -> (cs ++ [(Cascade $ parse s)], fd, fc)
+        'C' : ' ' :       s -> (cs ++ [Cascade $ parse s], fd, fc)
         'F' : 'C' : ' ' : s -> (cs, fd, map (Freecell . Just) (parse s))
         'F' : ' ' :       s -> (cs, (Foundation $ parse s) : fd, fc)
         _                   -> (cs, fd, fc))
