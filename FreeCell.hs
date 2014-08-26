@@ -11,14 +11,15 @@ This lets you play FreeCell.  It's fun, I think.
 
 module FreeCell 
     (  -- * Types to work with playing cards
-      Rank
-    , Suit
-    , Card
+      Rank(..)
+    , Suit(..)
+    , Card(..)
     , Stack
-    , Cascade
-    , Foundation
-    , Freecell
-    , Board
+    , Cascade(..)
+    , Foundation(..)
+    , Freecell(..)
+    , Board(..)
+    , CardStack(..)
     , GameState
     , FCTree
     , Location
@@ -41,12 +42,7 @@ module FreeCell
       loadFile
     , loadBoardFromText
     , -- * Accessor functions for the card types 
-      rank
-    , suit
-    , cascades
-    , foundations
-    , freecells
-    , gameBoard
+      gameBoard
     , sourceMove
     ) 
 where
@@ -94,31 +90,31 @@ newtype Foundation = Foundation [Card] deriving Eq
 newtype Freecell = Freecell (Maybe Card) deriving Eq
 
 class CardStack a where
-        cards :: CardStack a => a -> [Card]
+        getCards :: CardStack a => a -> [Card]
         pushCard :: CardStack a => a -> Card -> a
         emptyStack :: CardStack a => a -> Bool
-        emptyStack cs = null (cards cs)
+        emptyStack cs = null (getCards cs)
         popCard :: CardStack a => a -> a
         topCard :: CardStack a => a -> Maybe Card
-        topCard a = case cards a of
+        topCard a = case getCards a of
                         x:xs -> Just x
                         [] -> Nothing
 
 instance CardStack Cascade where
-        cards (Cascade cs) = cs
+        getCards (Cascade cs) = cs
         pushCard (Cascade cs) c = Cascade (c:cs)
         popCard (Cascade (c:cs)) = Cascade cs
         popCard (Cascade []) = error "Can't pop card from empty cascade."
 
 instance CardStack Foundation where
-        cards (Foundation cs) = cs
+        getCards (Foundation cs) = cs
         pushCard (Foundation cs) c = Foundation (c:cs)
         popCard (Foundation (c:cs)) = Foundation cs
         popCard (Foundation []) = error "Can't pop card from empty foundation."
 
 instance CardStack Freecell where
-        cards (Freecell Nothing) = []
-        cards (Freecell (Just c)) = [c]
+        getCards (Freecell Nothing) = []
+        getCards (Freecell (Just c)) = [c]
         pushCard (Freecell Nothing) c = error "Can't push card onto filled freecell."
         pushCard (Freecell _) c = Freecell (Just c)
         popCard (Freecell Nothing) = error "Can't pop card from empty freecell."
@@ -149,9 +145,9 @@ instance Show Board where
         unlines [csstring, fdstring, fcstring]
 
       where
-        csstring = unlines $ for cs $ ("C "  ++) . unwords . map cardString . cards
-        fdstring = unlines $ for fd $ ("FD " ++) . unwords . map cardString . cards
-        fcstring = "FC " ++ unwords (map cardString . concat $ map cards fc)
+        csstring = unlines $ for cs $ ("C "  ++) . unwords . map cardString . getCards
+        fdstring = unlines $ for fd $ ("FD " ++) . unwords . map cardString . getCards
+        fcstring = "FC " ++ unwords (map cardString . concat $ map getCards fc)
 
 for = flip map
 
@@ -274,7 +270,7 @@ entropyScore (Board cs fd fc) =
   where
     nullPoints = 6 * (length (filter emptyStack fc) - length (filter emptyStack cs))
 
-    runs = sum $ map (runlength . cards) cs
+    runs = sum $ map (runlength . getCards) cs
 
     runlength stack = case stack of
         Card King _ : _ -> -1
@@ -297,7 +293,7 @@ entropyScore (Board cs fd fc) =
 
     buriedFDs = (*3) 
         $ sum 
-        $ map cards cs `concatFor` findIndices (`elem` nextCards)
+        $ map getCards cs `concatFor` findIndices (`elem` nextCards)
 
     continues x2 x1 = succ (rank x1) == rank  x2 &&
                             red x1   == black x2
@@ -365,11 +361,11 @@ allCardPlaysNoFC bd card source = pf ++ stackplays
 -- |Determines which cards are available to be played from the cascades.
 availableCascadeCards :: Board -> [Card]
 availableCascadeCards (Board cs _ _) = 
-    map (head . cards) $ filter (not . emptyStack) cs
+    map (head . getCards) $ filter (not . emptyStack) cs
 
 -- |Determines which cards are in the freecells.
 availableFreeCellCards :: Board -> Stack
-availableFreeCellCards = concatMap cards . freecells
+availableFreeCellCards = concatMap getCards . freecells
 
 -- |Utility function to succ the rank of a card without throwing an error if you succ a King.
 safesucc :: Rank -> Rank
@@ -397,7 +393,7 @@ highestForceable stacks bool = case (stacks, bool) of
 -- (i.e. an Ace is played automatically to the foundations.)
 forcedMove :: GameState -> Bool
 forcedMove (GameState (Board _ fd _) (Move cd _ Foundations)) =
-        rank cd <= highestForceable (map cards fd) (red cd)
+        rank cd <= highestForceable (map getCards fd) (red cd)
 
 forcedMove _ = False
 
