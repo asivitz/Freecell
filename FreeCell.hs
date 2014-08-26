@@ -15,7 +15,9 @@ module FreeCell
     , Suit
     , Card
     , Stack
-    , CardSet
+    , Cascade
+    , Foundation
+    , Freecell
     , Board
     , GameState
     , FCTree
@@ -57,9 +59,6 @@ import Data.List
 import Data.Maybe
 import Data.Tree
 
-import           Data.Set (Set)
-import qualified Data.Set as S
-
 import System.Random
 
 -- |Type to represent the rank of a card, from Ace to King.
@@ -88,23 +87,62 @@ data Card = Card
 -- |Type alias to represent a stack of cards.
 type Stack = [Card]
 
--- |Type alias to represent a set of cards where order doesn't matter (i.e. freecells).
-type CardSet = Set Card
+newtype Cascade = Cascade [Card] deriving Eq
+
+newtype Foundation = Foundation [Card] deriving Eq
+
+newtype Freecell = Freecell (Maybe Card) deriving Eq
+
+class CardStack a where
+        cards :: CardStack a => a -> [Card]
+        pushCard :: CardStack a => a -> Card -> a
+        emptyStack :: CardStack a => a -> Bool
+        emptyStack cs = null (cards cs)
+        popCard :: CardStack a => a -> a
+        topCard :: CardStack a => a -> Maybe Card
+        topCard a = case cards a of
+                        x:xs -> Just x
+                        [] -> Nothing
+
+instance CardStack Cascade where
+        cards (Cascade cs) = cs
+        pushCard (Cascade cs) c = Cascade (c:cs)
+        popCard (Cascade (c:cs)) = Cascade cs
+        popCard (Cascade []) = error "Can't pop card from empty cascade."
+
+instance CardStack Foundation where
+        cards (Foundation cs) = cs
+        pushCard (Foundation cs) c = Foundation (c:cs)
+        popCard (Foundation (c:cs)) = Foundation cs
+        popCard (Foundation []) = error "Can't pop card from empty foundation."
+
+instance CardStack Freecell where
+        cards (Freecell Nothing) = []
+        cards (Freecell (Just c)) = [c]
+        pushCard (Freecell Nothing) c = error "Can't push card onto filled freecell."
+        pushCard (Freecell _) c = Freecell (Just c)
+        popCard (Freecell Nothing) = error "Can't pop card from empty freecell."
+        popCard (Freecell _) = Freecell Nothing
 
 -- |Type to represent a game board: 8 cascades, 4 foundations, 4 freecells.
+-- Freecells are represented by a list instead of a set to preserve order 
+-- for UI implementations.
 data Board = Board 
-    { cascades    :: [Stack]
-    , foundations :: [Stack]
-    , freecells   ::  CardSet
+    { cascades    :: [Cascade]
+    , foundations :: [Foundation]
+    , freecells   ::  [Freecell]
     } 
     
-  deriving Ord
+  {-deriving Ord-}
+
+removeEmpty :: CardStack a => [a] -> [a]
+removeEmpty = filter (not . emptyStack)
 
 instance Eq Board where
     Board cs fd fc == Board cs' fd' fc' = 
         and [ fd == fd'
-            , fc == fc'
-            , S.fromList cs == S.fromList cs'
+            , removeEmpty fc == removeEmpty fc'
+            , removeEmpty cs == removeEmpty cs'
             ]
 
 instance Show Board where
@@ -112,9 +150,9 @@ instance Show Board where
         unlines [csstring, fdstring, fcstring]
 
       where
-        csstring = unlines $ for cs $ ("C "  ++) . unwords . map cardString
-        fdstring = unlines $ for fd $ ("FD " ++) . unwords . map cardString
-        fcstring = "FC " ++ unwords (map cardString $ S.elems fc)
+        csstring = unlines $ for cs $ ("C "  ++) . unwords . map cardString . cards
+        fdstring = unlines $ for fd $ ("FD " ++) . unwords . map cardString . cards
+        fcstring = "FC " ++ unwords (map cardString . (foldl (++) []) $ (map cards) fc)
 
 for = flip map
 
@@ -169,7 +207,7 @@ instance Show Move where
 
 -- |Returns whether a card is red.
 red :: Card -> Bool
-red (Card _ suit) = suit `elem` [Heart, Diamond]
+red (Card _ st) = st `elem` [Heart, Diamond]
 
 -- |Returns whether a card is black.
 black :: Card -> Bool
@@ -185,7 +223,7 @@ pushCascade (Board cs fd fc) cd num =
     Board cs' fd fc
 
   where 
-    cs' = applyAt cs num (cd :)
+    cs' = applyAt cs num (`pushCard` cd)
 
 -- |Pop a card out of a cascade.
 popCascade :: Board -> Card -> Board
@@ -193,13 +231,12 @@ popCascade (Board cs fd fc) cd =
     Board cs' fd fc
 
   where
-    cs' = stackf cs
+    cs' = stackf $ removeEmpty cs
 
-    stackf []      = []
-    stackf ([]:xs) = [] : stackf xs
+    stackf [] = [] 
     stackf (x :xs) 
-        | head x == cd = tail x :        xs
-        | otherwise    = x      : stackf xs
+        | topCard x == Just cd = popCard x : xs
+        | otherwise       = x : stackf xs
 
 -- |Push a card into a foundation stack.
 pushFoundation :: Board -> Card -> Board
@@ -207,14 +244,20 @@ pushFoundation (Board cs fd fc) (Card rk st) =
     Board cs fd' fc
 
   where 
-    fd' = applyAt fd num (Card rk st :)
+    fd' = applyAt fd num (`pushCard` (Card rk st))
     num = fromJust $ elemIndex st [Heart .. Spade]
+
+modifyFirstWhere :: (a -> Bool) -> (a -> a) -> [a] -> [a]
+modifyFirstWhere _ _ [] = []
+modifyFirstWhere p f (x:xs)
+    | p x = (f x) : xs
+    | otherwise = x : (modifyFirstWhere p f xs)
 
 -- |Push a card into a freecell.
 pushFreeCell :: Board -> Card -> Board
 pushFreeCell (Board cs fd fc) cd = 
     Board cs fd 
-    $ S.insert cd fc
+    $ modifyFirstWhere emptyStack (`pushCard` cd) fc
 
 -- |Pop a card out of a freecell.
 popFreeCell :: Board -> Card -> Board
@@ -222,7 +265,7 @@ popFreeCell (Board cs fd fc) card =
     Board cs fd fc'
 
   where 
-    fc' = S.delete card fc
+    fc' = modifyFirstWhere (\x -> maybe False (==card) (topCard x)) popCard fc
 
 -- |Just a dumb function to attempt to identify to score moves.  Needs work, clearly.
 entropyScore :: Board -> Int
@@ -230,9 +273,9 @@ entropyScore (Board cs fd fc) =
     nullPoints + buriedFDs + runs
 
   where
-    nullPoints = 6 * (S.size fc - length (filter null cs))
+    nullPoints = 6 * (length (filter emptyStack fc) - length (filter emptyStack cs))
 
-    runs = sum $ map runlength cs
+    runs = sum $ map (runlength . cards) cs
 
     runlength stack = case stack of
         Card King _ : _ -> -1
@@ -245,7 +288,7 @@ entropyScore (Board cs fd fc) =
         _ : _ -> -1
         [] ->     0
         
-    nextCard stack = case stack of
+    nextCard (Foundation stack) = case stack of
         []           -> Card   Ace
         Card x _ : _ -> Card $ safesucc x
     
@@ -255,7 +298,7 @@ entropyScore (Board cs fd fc) =
 
     buriedFDs = (*3) 
         $ sum 
-        $ cs `concatFor` findIndices (`elem` nextCards)
+        $ (map cards cs) `concatFor` findIndices (`elem` nextCards)
 
     continues x2 x1 = 
         and [ succ (rank x1) == rank  x2
@@ -268,7 +311,7 @@ playableCascades (Board stacks _ _) cd =
     findIndices playableCascade stacks
 
   where
-    playableCascade stack = case stack of
+    playableCascade (Cascade stack) = case stack of
         []             -> True
         Card Ace _ : _ -> False
         st         : _ ->
@@ -284,13 +327,13 @@ playableFoundation (Board _ xs _) (Card rk st) =
   where 
     num = fromJust $ elemIndex st [Heart .. Spade]
 
-    playableFoundation' stack = case stack of
+    playableFoundation' (Foundation stack) = case stack of
         []    -> rk == Ace
         y : _ -> rk == succ (rank y)
 
 -- |Determines if a board has available freecells.
 playableFreeCell :: Board -> Bool
-playableFreeCell (Board _ _ fc) = S.size fc < 4
+playableFreeCell (Board _ _ fc) = length fc < 4
 
 -- |Determines all legal plays for a given Board and Card.
 allCardPlays :: Board -> Card -> Location -> [GameState]
@@ -327,11 +370,11 @@ allCardPlaysNoFC bd card source = pf ++ stackplays
 -- |Determines which cards are available to be played from the cascades.
 availableCascadeCards :: Board -> [Card]
 availableCascadeCards (Board cs _ _) = 
-    map head $ filter (not . null) cs
+    map (head . cards) $ filter (not . emptyStack) cs
 
 -- |Determines which cards are in the freecells.
 availableFreeCellCards :: Board -> Stack
-availableFreeCellCards = S.elems . freecells
+availableFreeCellCards = (foldl (++) []) . (map cards) . freecells
 
 -- |Utility function to succ the rank of a card without throwing an error if you succ a King.
 safesucc :: Rank -> Rank
@@ -358,11 +401,10 @@ highestForceable stacks bool = case (stacks, bool) of
 -- |Determines which moves to the foundations should be forced 
 -- (i.e. an Ace is played automatically to the foundations.)
 forcedMove :: GameState -> Bool
-forcedMove state = case state of
-    GameState (Board _ fd _) (Move cd _ Foundations) ->
-        rank cd <= highestForceable fd (red cd)
+forcedMove (GameState (Board _ fd _) (Move cd _ Foundations)) =
+        rank cd <= highestForceable (map cards fd) (red cd)
 
-    _ -> False
+forcedMove _ = False
 
 -- |Determines all of the permissable moves for a given board.
 allPermissable :: Board -> [GameState]
@@ -380,7 +422,7 @@ allPermissable bd =
     cscards  = availableCascadeCards bd
     csboards = for cscards $ popCascade bd
     
-    cards  = fccards  ++ cscards
+    crds  = fccards  ++ cscards
     boards = fcboards ++ csboards
     
     sources = 
@@ -388,14 +430,14 @@ allPermissable bd =
         replicate (length cscards) CascadesSource
               
     moves =
-        zip3 boards cards sources `concatFor` \(a,b,c) -> 
+        zip3 boards crds sources `concatFor` \(a,b,c) -> 
             allCardPlays a b c
             
 concatFor = flip concatMap
 
 -- |Checks if a board is solved.
 solvedBoard :: Board -> Bool
-solvedBoard (Board cs _ fc) = all null cs && S.null fc
+solvedBoard (Board cs _ fc) = all emptyStack cs && all emptyStack fc
 
 -- |Builds the lazy tree to hold all board moves.
 buildTree :: Board -> FCTree
@@ -440,11 +482,11 @@ treeSolverPruned = Solution
 -- |Prunes the tree and solves the game (in theory!).
 check :: FCTree -> [[GameState]]
 check tr = 
-    evalState (check' tr) S.empty
+    evalState (check' tr) []
 
   where 
     check' (Node s forests) = do
-        bdset <- get
+        bdlst <- get
 
         let bd = gameBoard $ head s
 
@@ -452,12 +494,12 @@ check tr =
         then do
             return [s] 
 
-        else if S.member bd bdset 
+        else if any (==bd) bdlst 
         then do
             return [] 
             
         else do
-            modify (S.insert bd) 
+            modify (bd:) 
 
             concat `fmap` mapM check' forests
 
@@ -474,32 +516,42 @@ check tr =
 loadFile :: FilePath -> IO Board
 loadFile x = loadBoardFromText <$> readFile x
 
+newFoundations :: [Foundation]
+newFoundations = replicate 4 (Foundation [])
+
+newFreecells :: [Freecell]
+newFreecells = replicate 4 (Freecell Nothing)
+
 -- |Loads a board from a string.  The foundations part is implemented wrong, 
 -- and I'll probably fix it or something.
 loadBoardFromText :: String -> Board
 loadBoardFromText rawtext = 
-    lines rawtext `loadBoard` Board [] [[],[],[],[]] S.empty
+    case lines rawtext `loadBoard` ([], [], []) of
+        (cs, fd, fc) -> Board cs fd fc
 
   where
-    loadBoard :: [String] -> Board -> Board
-    loadBoard = flip $ foldl $ \bd list -> case list of
-        'C' : ' ' :       s -> bd { cascades    = cascades bd ++ [parse s] }
-        'F' : 'C' : ' ' : s -> bd { freecells   = S.fromList $ parse s }
-        'F' : ' ' :       s -> bd { foundations = parse s : foundations bd }
-        _                   -> bd
+    loadBoard :: [String] -> ([Cascade], [Foundation], [Freecell]) -> ([Cascade], [Foundation], [Freecell])
+    loadBoard strings emp = foldl (\(cs, fd, fc) list -> case list of
+        'C' : ' ' :       s -> (cs ++ [(Cascade $ parse s)], fd, fc)
+        'F' : 'C' : ' ' : s -> (cs, fd, map (Freecell . Just) (parse s))
+        'F' : ' ' :       s -> (cs, (Foundation $ parse s) : fd, fc)
+        _                   -> (cs, fd, fc))
+        emp strings
+
     
     parse = map parser . words
 
 -- |Parses a two-character string into a card.
 parser :: String -> Card
 parser (rankChar : rest) =
-    Card rank suit
+    Card rk st
 
   where
-    rank = fromMaybe (error $ "Bad parse string: " ++ (rankChar : rest))
+    rk = fromMaybe (error $ "Bad parse string: " ++ (rankChar : rest))
         $ rankChar `lookup` zip "23456789TJQKA" [Two ..]
         
-    suit = suitParser rest
+    st = suitParser rest
+parser _ = error "Can't parse Card if not two characters."
         
 -- |Returns a single character for each rank.
 cardChar :: Rank -> Char
@@ -545,11 +597,8 @@ deck = [Card x y | x <- [Ace ..], y <- [Heart ..]]
 
 -- |Shuffles a deck using the IO random generator.
 deckShuffle :: Eq a => [a] -> IO [a]
-deckShuffle xs = case xs of 
-    [] ->
-        return []
-        
-    xs -> do
+deckShuffle [] = return []
+deckShuffle xs = do
         x <- randomRIO (0, length xs-1) :: IO Int
 
         let val = xs !! x
@@ -574,7 +623,7 @@ makeGame = do
         s7 = l7
         cs = [s0,s1,s2,s3,s4,s5,s6,s7]
         
-    return $ Board cs [[],[],[],[]] S.empty
+    return $ Board (map Cascade cs) newFoundations newFreecells
 
 -- |Text based Freecell game.
 playGame :: IO ()
