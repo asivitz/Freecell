@@ -22,8 +22,8 @@ module FreeCell
     , CardStack(..)
     , GameState
     , FCTree
-    , Location
-    , Move
+    , Location(..)
+    , Move(..)
     , Solution
     , -- * Utility functions to work with playing cards
       red
