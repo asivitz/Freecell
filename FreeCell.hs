@@ -83,11 +83,11 @@ data Card = Card
 -- |Type alias to represent a stack of cards.
 type Stack = [Card]
 
-newtype Cascade = Cascade [Card] deriving Eq
+newtype Cascade = Cascade [Card] deriving (Eq, Show)
 
-newtype Foundation = Foundation [Card] deriving Eq
+newtype Foundation = Foundation [Card] deriving (Eq, Show)
 
-newtype Freecell = Freecell (Maybe Card) deriving Eq
+newtype Freecell = Freecell (Maybe Card) deriving (Eq, Show)
 
 class CardStack a where
         getCards :: CardStack a => a -> [Card]
@@ -115,8 +115,8 @@ instance CardStack Foundation where
 instance CardStack Freecell where
         getCards (Freecell Nothing) = []
         getCards (Freecell (Just c)) = [c]
-        pushCard (Freecell Nothing) c = error "Can't push card onto filled freecell."
-        pushCard (Freecell _) c = Freecell (Just c)
+        pushCard (Freecell Nothing) c = Freecell (Just c)
+        pushCard (Freecell _) c = error "Can't push card onto filled freecell."
         popCard (Freecell Nothing) = error "Can't pop card from empty freecell."
         popCard (Freecell _) = Freecell Nothing
 
@@ -324,7 +324,7 @@ playableFoundation (Board _ xs _) (Card rk st) =
 
 -- |Determines if a board has available freecells.
 playableFreeCell :: Board -> Bool
-playableFreeCell (Board _ _ fc) = length fc < 4
+playableFreeCell (Board _ _ fc) = any emptyStack fc
 
 -- |Determines all legal plays for a given Board and Card.
 allCardPlays :: Board -> Card -> Location -> [GameState]
@@ -416,13 +416,12 @@ allPermissable bd =
     crds  = fccards  ++ cscards
     boards = fcboards ++ csboards
     
-    sources = 
+    sources =  
         replicate (length fccards) FreeCells ++ 
         replicate (length cscards) CascadesSource
               
-    moves =
-        zip3 boards crds sources `concatFor` \(a,b,c) -> 
-            allCardPlays a b c
+    moves = zip3 boards crds sources `concatFor` \(a,b,c) -> 
+        allCardPlays a b c
             
 concatFor = flip concatMap
 
