@@ -156,7 +156,6 @@ data Location
     = Cascades Int 
     | CascadesSource 
     | Foundations 
-    | FreeCells 
     | FreeCell Int
     
   deriving (Show, Eq)
@@ -256,12 +255,12 @@ pushFreeCell (Board cs fd fc) cd i =
     $ applyAt fc i (`pushCard` cd) 
 
 -- |Pop a card out of a freecell.
-popFreeCell :: Board -> Card -> Board
-popFreeCell (Board cs fd fc) card =
+popFreeCell :: Board -> Int -> Board
+popFreeCell (Board cs fd fc) i =
     Board cs fd fc'
 
   where 
-    fc' = modifyFirstWhere (maybe False (==card) . topCard) popCard fc
+    fc' = applyAt fc i popCard
 
 -- |Just a dumb function to attempt to identify to score moves.  Needs work, clearly.
 entropyScore :: Board -> Int
@@ -399,17 +398,17 @@ allPermissable bd =
   where
     forced = filter forcedMove moves
   
-    fccards  = availableFreeCellCards bd
-    fcboards = for fccards $ popFreeCell bd
+    availableFC = filter (not . emptyStack . fst) $ zip (freecells bd) [0..]
+    fcboards = for (map snd availableFC) $ popFreeCell bd
     
     cscards  = availableCascadeCards bd
     csboards = for cscards $ popCascade bd
     
-    crds  = fccards  ++ cscards
+    crds  = mapMaybe (topCard . fst) availableFC  ++ cscards
     boards = fcboards ++ csboards
     
     sources =  
-        replicate (length fccards) FreeCells ++ 
+        map (FreeCell . snd) availableFC ++
         replicate (length cscards) CascadesSource
               
     moves = zip3 boards crds sources `concatFor` \(a,b,c) -> 
