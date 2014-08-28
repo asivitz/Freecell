@@ -157,6 +157,7 @@ data Location
     | CascadesSource 
     | Foundations 
     | FreeCells 
+    | FreeCell Int
     
   deriving (Show, Eq)
 
@@ -249,10 +250,10 @@ modifyFirstWhere p f (x:xs)
     | otherwise = x : modifyFirstWhere p f xs
 
 -- |Push a card into a freecell.
-pushFreeCell :: Board -> Card -> Board
-pushFreeCell (Board cs fd fc) cd = 
+pushFreeCell :: Board -> Card -> Int -> Board
+pushFreeCell (Board cs fd fc) cd i = 
     Board cs fd 
-    $ modifyFirstWhere emptyStack (`pushCard` cd) fc
+    $ applyAt fc i (`pushCard` cd) 
 
 -- |Pop a card out of a freecell.
 popFreeCell :: Board -> Card -> Board
@@ -322,23 +323,14 @@ playableFoundation (Board _ xs _) (Card rk st) =
         []    -> rk == Ace
         y : _ -> rk == succ (rank y)
 
--- |Determines if a board has available freecells.
-playableFreeCell :: Board -> Bool
-playableFreeCell (Board _ _ fc) = any emptyStack fc
-
 -- |Determines all legal plays for a given Board and Card.
 allCardPlays :: Board -> Card -> Location -> [GameState]
 allCardPlays bd card source = 
     allCardPlaysNoFC bd card source ++ fcplays
 
   where
-    fcplays = 
-        [GameState 
-            (pushFreeCell bd card) 
-            (Move card source FreeCells) 
-        
-        | playableFreeCell bd
-        ]
+      fcplays = map (\loc@(FreeCell x) -> GameState (pushFreeCell bd card x) (Move card source loc)) fclocations
+      fclocations = map (FreeCell . snd) $ filter (emptyStack . fst) $ zip (freecells bd) [0..]
 
 -- |Determines all legal plays excluding freecells.  Not sure this is necessary...
 allCardPlaysNoFC :: Board -> Card -> Location -> [GameState]
